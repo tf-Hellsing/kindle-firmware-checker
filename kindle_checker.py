@@ -6,9 +6,9 @@ import sys
 import math # Hinzugefügt für genauere Fortschrittsberechnung
 import re
 import os # Für os.path.splitext in get_filename_pattern
+from packaging import version as pkg_version # Für robusten Versionsvergleich
 
 # --- Konstanten ---
-# Es ist oft sinnvoll, wiederkehrende Werte als Konstanten zu definieren.
 DEFAULT_TIMEOUT = 10
 DEFAULT_MAX_THREADS = 5 # Standardwert für Threads auf 5 reduziert
 DEFAULT_DELAY_PROBABILITY = 0.1
@@ -35,15 +35,12 @@ def calculate_total_checks(version_range):
 
     for major in range(start_major, end_major + 1):
         min_minor_loop = start_minor if major == start_major else 0
-        # Korrektur: Minor geht bis 99, außer im letzten Major-Durchlauf
         max_minor_loop = end_minor if major == end_major else max_minor_default
 
         for minor in range(min_minor_loop, max_minor_loop + 1):
             min_patch_loop = start_patch if major == start_major and minor == start_minor else 0
-            # Der End-Patch wird nur im allerletzten Major/Minor-Durchlauf berücksichtigt
             max_patch_loop = end_patch if major == end_major and minor == end_minor else max_patch
 
-            # Stelle sicher, dass min_patch_loop nicht größer als max_patch_loop ist
             if min_patch_loop <= max_patch_loop:
                  total += (max_patch_loop - min_patch_loop + 1)
     return total
@@ -52,7 +49,7 @@ def calculate_total_checks(version_range):
 def check_url(full_url, possible_delays, delay_probability, timeout):
     """
     Führt die Anfrage für eine einzelne URL aus und gibt den Dateinamen oder einen Fehler zurück.
-    Die Verbose-Ausgabe erfolgt in der aufrufenden Funktion.
+    Gibt bei Fehlern None zurück und loggt den Fehler nach stderr.
 
     Args:
         full_url (str): Die URL, die überprüft werden soll.
@@ -63,65 +60,51 @@ def check_url(full_url, possible_delays, delay_probability, timeout):
     Returns:
         str: Der Dateiname, wenn die URL gefunden wird (Status 200).
         int: Der HTTP-Statuscode, wenn die Datei nicht gefunden wird (nicht 200).
-        Exception: Wenn ein Request-Fehler auftritt (Timeout, ConnectionError etc.).
+        None: Wenn ein Request-Fehler auftritt (Timeout, ConnectionError etc.).
     """
     try:
-        # Füge einen User-Agent hinzu, um ggf. Blockierungen zu vermeiden
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-        response = requests.head(full_url, timeout=timeout, headers=headers, allow_redirects=True) # Timeout als int übergeben, Redirects erlauben
+        response = requests.head(full_url, timeout=timeout, headers=headers, allow_redirects=True)
 
-        # Füge eine optionale Verzögerung *nach* jeder Anfrage hinzu, um den Server nicht zu überlasten
         if random.random() < delay_probability:
-            # Wähle nur, wenn Delays vorhanden sind
             if possible_delays:
                 time.sleep(random.choice(possible_delays))
 
         if response.status_code == 200:
-            # Extrahiere den Dateinamen aus der URL
             return full_url.split("/")[-1]
         else:
-            # Gib den Statuscode zurück, wenn nicht 200
             return response.status_code
     except requests.exceptions.RequestException as e:
-        # Gib die Exception zurück, um sie oben zu behandeln
-        return e
+        # Logge den Fehler nach stderr und gib None zurück
+        print(f"\nFehler bei {full_url}: {type(e).__name__} - {e}", file=sys.stderr)
+        return None
     except Exception as e:
         # Fange andere unerwartete Fehler ab
-        print(f"Unerwarteter interner Fehler bei URL {full_url}: {e}", file=sys.stderr)
-        return e
+        print(f"\nUnerwarteter interner Fehler bei URL {full_url}: {e}", file=sys.stderr)
+        return None
 
 
-# --- Suchfunktionen ---
-
-def check_firmware_version(base_url, filename_pattern, version_range, possible_delays, delay_probability, timeout=DEFAULT_TIMEOUT, verbose=DEFAULT_VERBOSE):
+def generate_firmware_urls(base_url, filename_pattern, version_range):
     """
-    Überprüft *sequenziell*, ob Firmware-Dateien in einem bestimmten Versionsbereich auf einer Webseite existieren.
+    Generator-Funktion, die alle zu prüfenden URLs basierend auf dem Versionsbereich erzeugt.
 
     Args:
-        base_url (str): Die Basis-URL der Webseite.
+        base_url (str): Die Basis-URL.
         filename_pattern (str): Das Muster des Dateinamens (z.B. "update_*.bin").
-        version_range (tuple): Ein Tupel mit der Start- und Endversion ((major, minor, patch), (major, minor, patch)).
-        possible_delays (list): Eine Liste der möglichen Verzögerungszeiten.
-        delay_probability (float): Wahrscheinlichkeit einer Verzögerung nach jeder Anfrage.
-        timeout (int, optional): Timeout für die Head-Anfrage in Sekunden. Default ist DEFAULT_TIMEOUT.
-        verbose (bool, optional): Steuert die Ausführlichkeit der Ausgabe. Default ist DEFAULT_VERBOSE.
+        version_range (tuple): Ein Tupel mit der Start- und Endversion.
 
-    Returns:
-        list: Eine Liste der gefundenen herunterladbaren Dateinamen.
+    Yields:
+        str: Die vollständige URL zum Überprüfen.
     """
-    found_files = []
     start_major, start_minor, start_patch = version_range[0]
     end_major, end_minor, end_patch = version_range[1]
+    max_patch_val = 25
+    max_minor_default = 99
 
-    total_checks = calculate_total_checks(version_range)
-    if total_checks == 0:
-        print("Keine Versionen im angegebenen Bereich zu prüfen.")
-        return []
-    checks_done = 0
-    max_patch_val = 25 # Patch geht von 0 bis 25
-    max_minor_default = 99 # Standard-Maximum für Minor
-
-    print(f"Starte sequenzielle Suche ({total_checks} Versionen)...")
+    # Prüfe auf ungültigen Bereich (redundant zu calculate_total_checks, aber sicher ist sicher)
+    if start_major > end_major: return
+    if start_major == end_major and start_minor > end_minor: return
+    if start_major == end_major and start_minor == end_minor and start_patch > end_patch: return
 
     for major in range(start_major, end_major + 1):
         min_minor_loop = start_minor if major == start_major else 0
@@ -138,56 +121,107 @@ def check_firmware_version(base_url, filename_pattern, version_range, possible_d
                 version = f"{major}.{minor}.{patch}"
                 try:
                     test_filename = filename_pattern.replace("*", version)
+                    yield f"{base_url}{test_filename}"
                 except AttributeError:
-                    print(f"Fehler: Ungültiges Dateinamenmuster '{filename_pattern}'. Überspringe.", file=sys.stderr)
-                    continue
+                    print(f"\nFehler: Ungültiges Dateinamenmuster '{filename_pattern}'. Überspringe Version {version}.", file=sys.stderr)
+                    continue # Zum nächsten Patch springen
 
-                full_url = f"{base_url}{test_filename}"
 
-                # check_url gibt Dateiname (str), Statuscode (int) oder Exception zurück
-                result = check_url(full_url, possible_delays, delay_probability, timeout)
+def extract_version_key(filename):
+    """
+    Extrahiert ein Versionsobjekt aus einem Dateinamen für die Sortierung.
+    Verwendet eine Regex, um Versionsnummern wie X.Y.Z oder X.Y.Z.A zu finden.
+    Gibt ein niedriges Versionsobjekt zurück, wenn keine Version gefunden wird.
+    """
+    # Versucht, die Version zu extrahieren (angepasste Regex)
+    match = re.search(r'(\d+\.\d+\.\d+(?:\.\d+)*)', filename)
+    if match:
+        try:
+            # Verwende packaging.version für robustes Parsen und Vergleichen
+            return pkg_version.parse(match.group(1))
+        except pkg_version.InvalidVersion:
+            # Fallback, wenn das Parsen fehlschlägt
+            print(f"Warnung: Ungültiges Versionsformat in '{filename}' gefunden.", file=sys.stderr)
+            return pkg_version.parse("0.0.0") # Gib eine niedrige Version für die Sortierung zurück
+    else:
+        # Fallback, wenn keine Version gefunden wird
+         print(f"Warnung: Keine Version in '{filename}' für die Sortierung gefunden.", file=sys.stderr)
+         return pkg_version.parse("0.0.0")
 
-                checks_done += 1
-                progress = (checks_done / total_checks) * 100 if total_checks > 0 else 100
 
-                # Ausgabe basierend auf dem Ergebnis und Verbose-Einstellung
-                if isinstance(result, str): # Datei gefunden (Status 200)
-                    found_files.append(result)
-                    sys.stdout.write("\r" + " " * 80 + "\r") # Zeile löschen
-                    print(f"Gefunden: {full_url}")
-                    if not verbose:
-                         sys.stdout.write(f"\rFortschritt: {checks_done}/{total_checks} ({progress:.2f}%) [{len(found_files)} gefunden]")
-                         sys.stdout.flush()
-                elif isinstance(result, int): # Datei nicht gefunden (anderer Statuscode)
-                    if verbose:
-                        sys.stdout.write("\r" + " " * 80 + "\r") # Zeile löschen
-                        print(f"Nicht gefunden: {full_url} (Status: {result})")
-                        # Korrektur: Fortschritt auch im Verbose-Modus nach "Nicht gefunden" anzeigen
-                        sys.stdout.write(f"\rFortschritt: {checks_done}/{total_checks} ({progress:.2f}%) [{len(found_files)} gefunden]")
-                        sys.stdout.flush()
-                    elif not verbose: # Nur Fortschritt aktualisieren
-                        sys.stdout.write(f"\rFortschritt: {checks_done}/{total_checks} ({progress:.2f}%) [{len(found_files)} gefunden]")
-                        sys.stdout.flush()
-                elif isinstance(result, Exception): # Fehler (Timeout, ConnectionError etc.)
-                    sys.stdout.write("\r" + " " * 80 + "\r") # Zeile löschen
-                    print(f"Fehler bei {full_url}: {type(result).__name__}", file=sys.stderr) # Nur Fehlertyp im Normalfall
-                    if verbose: # Detaillierter Fehler im Verbose-Modus
-                         print(f"  -> {result}", file=sys.stderr)
-                    # Korrektur: Fortschritt auch im Verbose-Modus nach Fehler anzeigen
-                    sys.stdout.write(f"\rFortschritt: {checks_done}/{total_checks} ({progress:.2f}%) [{len(found_files)} gefunden]")
-                    sys.stdout.flush()
-                else: # Unerwarteter Rückgabetyp von check_url
-                     sys.stdout.write("\r" + " " * 80 + "\r") # Zeile löschen
-                     print(f"Unerwarteter Rückgabetyp von check_url für {full_url}: {type(result)}", file=sys.stderr)
-                     # Korrektur: Fortschritt auch im Verbose-Modus nach unerwartetem Typ anzeigen
-                     sys.stdout.write(f"\rFortschritt: {checks_done}/{total_checks} ({progress:.2f}%) [{len(found_files)} gefunden]")
-                     sys.stdout.flush()
+def sort_firmwares_by_version(firmware_list):
+    """
+    Sortiert eine Liste von Firmware-Dateinamen numerisch nach ihrer Version.
+    """
+    if not firmware_list:
+        return []
+
+    # Sortiere die Liste mithilfe des extrahierten Versionsobjekts als Schlüssel
+    try:
+        firmware_list.sort(key=extract_version_key)
+        return firmware_list
+    except Exception as e:
+        print(f"\nFehler beim Sortieren der Firmware-Liste: {e}", file=sys.stderr)
+        # Gib die unsortierte Liste im Fehlerfall zurück
+        return firmware_list
+
+# --- Suchfunktionen ---
+
+def check_firmware_version(base_url, filename_pattern, version_range, possible_delays, delay_probability, timeout=DEFAULT_TIMEOUT, verbose=DEFAULT_VERBOSE):
+    """
+    Überprüft *sequenziell*, ob Firmware-Dateien existieren.
+    Verwendet jetzt den URL-Generator.
+    """
+    found_files = []
+    total_checks = calculate_total_checks(version_range)
+    if total_checks == 0:
+        print("Keine Versionen im angegebenen Bereich zu prüfen.")
+        return []
+    checks_done = 0
+
+    print(f"Starte sequenzielle Suche ({total_checks} Versionen)...")
+
+    # Verwende den Generator, um URLs zu erhalten
+    for full_url in generate_firmware_urls(base_url, filename_pattern, version_range):
+        # check_url gibt Dateiname (str), Statuscode (int) oder None (Fehler) zurück
+        result = check_url(full_url, possible_delays, delay_probability, timeout)
+        checks_done += 1
+        progress = (checks_done / total_checks) * 100 if total_checks > 0 else 100
+
+        # Ausgabe basierend auf dem Ergebnis und Verbose-Einstellung
+        if isinstance(result, str): # Datei gefunden (Status 200)
+            found_files.append(result)
+            # Lösche Fortschrittszeile nur, wenn nicht verbose
+            if not verbose: sys.stdout.write("\r" + " " * 80 + "\r")
+            print(f"Gefunden: {full_url}")
+            if not verbose:
+                 sys.stdout.write(f"\rFortschritt: {checks_done}/{total_checks} ({progress:.2f}%) [{len(found_files)} gefunden]")
+                 sys.stdout.flush()
+        elif isinstance(result, int): # Datei nicht gefunden (anderer Statuscode)
+            if verbose:
+                # Im Verbose-Modus keine Fortschrittszeile, nur die Meldung
+                print(f"Nicht gefunden: {full_url} (Status: {result})")
+            elif not verbose: # Nur Fortschritt aktualisieren
+                sys.stdout.write(f"\rFortschritt: {checks_done}/{total_checks} ({progress:.2f}%) [{len(found_files)} gefunden]")
+                sys.stdout.flush()
+        elif result is None: # Fehler (Timeout, ConnectionError etc.) - Fehler wurde bereits in check_url geloggt
+            if verbose:
+                 # Im Verbose-Modus wurde der Fehler bereits ausgegeben.
+                 pass
+            elif not verbose: # Nur Fortschritt aktualisieren
+                sys.stdout.write(f"\rFortschritt: {checks_done}/{total_checks} ({progress:.2f}%) [{len(found_files)} gefunden]")
+                sys.stdout.flush()
+        else: # Unerwarteter Rückgabetyp von check_url
+             if not verbose: sys.stdout.write("\r" + " " * 80 + "\r")
+             print(f"Unerwarteter Rückgabetyp von check_url für {full_url}: {type(result)}", file=sys.stderr)
+             if not verbose:
+                sys.stdout.write(f"\rFortschritt: {checks_done}/{total_checks} ({progress:.2f}%) [{len(found_files)} gefunden]")
+                sys.stdout.flush()
 
 
     # Abschluss der Suche
     if not verbose:
         sys.stdout.write("\r" + " " * 80 + "\r") # Letzte Fortschrittszeile löschen
-    # Im Verbose-Modus wird die letzte Fortschrittszeile durch die Abschlussmeldung ersetzt
     print("\nSequenzielle Suche abgeschlossen.")
     return found_files
 
@@ -195,63 +229,22 @@ def check_firmware_version(base_url, filename_pattern, version_range, possible_d
 def check_firmware_version_threaded(base_url, filename_pattern, version_range, possible_delays, delay_probability, timeout=DEFAULT_TIMEOUT, max_threads=DEFAULT_MAX_THREADS, verbose=DEFAULT_VERBOSE):
     """
     Überprüft *parallel* mit Threads, ob Firmware-Dateien existieren.
-
-    Args:
-        base_url (str): Die Basis-URL.
-        filename_pattern (str): Das Muster des Dateinamens (z.B. "update_*.bin").
-        version_range (tuple): Ein Tupel mit der Start- und Endversion.
-        possible_delays (list): Eine Liste der möglichen Verzögerungszeiten.
-        delay_probability (float): Wahrscheinlichkeit einer Verzögerung nach jeder Anfrage.
-        timeout (int, optional): Timeout für die Head-Anfrage. Default ist DEFAULT_TIMEOUT.
-        max_threads (int, optional): Maximale Anzahl der Threads. Default ist DEFAULT_MAX_THREADS.
-        verbose (bool, optional): Steuert die Ausführlichkeit der Ausgabe. Default ist DEFAULT_VERBOSE.
-
-    Returns:
-        list: Eine Liste der gefundenen herunterladbaren Dateinamen.
+    Verwendet jetzt den URL-Generator.
     """
     found_files = []
     futures = {} # Dictionary verwenden: {future: url}
-    start_major, start_minor, start_patch = version_range[0]
-    end_major, end_minor, end_patch = version_range[1]
-
     total_checks = calculate_total_checks(version_range)
     if total_checks == 0:
         print("Keine Versionen im angegebenen Bereich zu prüfen.")
         return []
     checks_done = 0
-    max_patch_val = 25
-    max_minor_default = 99
-
-    # Verwende den übergebenen max_threads Parameter, der den Default-Wert aus den Konstanten hat
-    # oder durch die Einstellungen geändert werden kann.
     actual_max_threads = max_threads
 
     print(f"Starte parallele Suche ({total_checks} Versionen mit max. {actual_max_threads} Threads)...")
 
     with ThreadPoolExecutor(max_workers=actual_max_threads) as executor:
-        # URLs generieren
-        urls_to_check = []
-        for major in range(start_major, end_major + 1):
-            min_minor_loop = start_minor if major == start_major else 0
-            max_minor_loop = end_minor if major == end_major else max_minor_default
-            for minor in range(min_minor_loop, max_minor_loop + 1):
-                min_patch_loop = start_patch if major == start_major and minor == start_minor else 0
-                max_patch_loop = end_patch if major == end_major and minor == end_minor else max_patch_val
-                if min_patch_loop > max_patch_loop:
-                    continue
-                for patch in range(min_patch_loop, max_patch_loop + 1):
-                    version = f"{major}.{minor}.{patch}"
-                    try:
-                        test_filename = filename_pattern.replace("*", version)
-                    except AttributeError:
-                         print(f"Fehler: Ungültiges Dateinamenmuster '{filename_pattern}'. Überspringe Version {version}.", file=sys.stderr)
-                         continue
-                    full_url = f"{base_url}{test_filename}"
-                    urls_to_check.append(full_url)
-
-        # Tasks übergeben
-        for url in urls_to_check:
-            # Übergebe Argumente an check_url
+        # Tasks übergeben mithilfe des Generators
+        for url in generate_firmware_urls(base_url, filename_pattern, version_range):
             future = executor.submit(check_url, url, possible_delays, delay_probability, timeout)
             futures[future] = url
 
@@ -259,10 +252,12 @@ def check_firmware_version_threaded(base_url, filename_pattern, version_range, p
         for future in as_completed(futures):
             url = futures[future]
             try:
-                # Ergebnis holen: Dateiname (str), Statuscode (int) oder Exception
+                # Ergebnis holen: Dateiname (str), Statuscode (int) oder None (Fehler)
                 result = future.result()
             except Exception as exc:
-                 result = exc # Fehler beim Holen des Results
+                 # Fehler beim Holen des Results (sollte selten sein, da check_url Exceptions fängt)
+                 print(f"\nFehler beim Abrufen des Ergebnisses für {url}: {exc}", file=sys.stderr)
+                 result = None # Behandle als Fehler
 
             checks_done += 1
             progress = (checks_done / total_checks) * 100 if total_checks > 0 else 100
@@ -270,41 +265,34 @@ def check_firmware_version_threaded(base_url, filename_pattern, version_range, p
             # Ausgabe basierend auf dem Ergebnis und Verbose-Einstellung
             if isinstance(result, str): # Datei gefunden (Status 200)
                 found_files.append(result)
-                sys.stdout.write("\r" + " " * 80 + "\r")
+                if not verbose: sys.stdout.write("\r" + " " * 80 + "\r")
                 print(f"Gefunden: {url}")
-                # Korrektur: Fortschritt auch im Verbose-Modus nach Fund anzeigen
-                sys.stdout.write(f"\rFortschritt: {checks_done}/{total_checks} ({progress:.2f}%) [{len(found_files)} gefunden]")
-                sys.stdout.flush()
-            elif isinstance(result, int): # Datei nicht gefunden (anderer Statuscode)
-                if verbose:
-                    sys.stdout.write("\r" + " " * 80 + "\r")
-                    print(f"Nicht gefunden: {url} (Status: {result})")
-                    # Korrektur: Fortschritt auch im Verbose-Modus nach "Nicht gefunden" anzeigen
+                if not verbose:
                     sys.stdout.write(f"\rFortschritt: {checks_done}/{total_checks} ({progress:.2f}%) [{len(found_files)} gefunden]")
                     sys.stdout.flush()
+            elif isinstance(result, int): # Datei nicht gefunden (anderer Statuscode)
+                if verbose:
+                    print(f"Nicht gefunden: {url} (Status: {result})")
                 elif not verbose: # Nur Fortschritt aktualisieren
                     sys.stdout.write(f"\rFortschritt: {checks_done}/{total_checks} ({progress:.2f}%) [{len(found_files)} gefunden]")
                     sys.stdout.flush()
-            elif isinstance(result, Exception): # Fehler (Timeout, ConnectionError etc.)
-                sys.stdout.write("\r" + " " * 80 + "\r")
-                print(f"Fehler bei {url}: {type(result).__name__}", file=sys.stderr)
+            elif result is None: # Fehler (Timeout, ConnectionError etc.) - Fehler wurde bereits in check_url geloggt
                 if verbose:
-                     print(f"  -> {result}", file=sys.stderr)
-                # Korrektur: Fortschritt auch im Verbose-Modus nach Fehler anzeigen
-                sys.stdout.write(f"\rFortschritt: {checks_done}/{total_checks} ({progress:.2f}%) [{len(found_files)} gefunden]")
-                sys.stdout.flush()
+                     pass # Fehler wurde schon geloggt
+                elif not verbose: # Nur Fortschritt aktualisieren
+                    sys.stdout.write(f"\rFortschritt: {checks_done}/{total_checks} ({progress:.2f}%) [{len(found_files)} gefunden]")
+                    sys.stdout.flush()
             else: # Unerwarteter Rückgabetyp
-                 sys.stdout.write("\r" + " " * 80 + "\r")
+                 if not verbose: sys.stdout.write("\r" + " " * 80 + "\r")
                  print(f"Unerwarteter Rückgabetyp von check_url für {url}: {type(result)}", file=sys.stderr)
-                 # Korrektur: Fortschritt auch im Verbose-Modus nach unerwartetem Typ anzeigen
-                 sys.stdout.write(f"\rFortschritt: {checks_done}/{total_checks} ({progress:.2f}%) [{len(found_files)} gefunden]")
-                 sys.stdout.flush()
+                 if not verbose:
+                    sys.stdout.write(f"\rFortschritt: {checks_done}/{total_checks} ({progress:.2f}%) [{len(found_files)} gefunden]")
+                    sys.stdout.flush()
 
 
     # Abschluss der Suche
     if not verbose:
         sys.stdout.write("\r" + " " * 80 + "\r") # Letzte Fortschrittszeile löschen
-    # Im Verbose-Modus wird die letzte Fortschrittszeile durch die Abschlussmeldung ersetzt
     print("\nParallele Suche abgeschlossen.")
 
     return found_files
@@ -338,14 +326,19 @@ def get_version_input(prompt, default_version_tuple):
                  print(f"Verwende Standardversion: {default_version_str}")
                  return default_version_tuple
             try:
-                version = tuple(map(int, version_input.split(".")))
-                if len(version) != 3:
-                    raise ValueError("Ungültiges Format. Benötigt Major.Minor.Patch.")
-                if any(v < 0 for v in version):
+                # Versuche, mit packaging.version zu parsen, um mehr Formate zu erlauben
+                parsed_version = pkg_version.parse(version_input)
+                # Extrahiere die ersten drei Teile (Major, Minor, Patch)
+                version_parts = parsed_version.release[:3]
+                # Fülle mit Nullen auf, falls weniger als 3 Teile vorhanden sind
+                while len(version_parts) < 3:
+                    version_parts += (0,)
+                # Stelle sicher, dass alle Teile nicht negativ sind
+                if any(v < 0 for v in version_parts):
                      raise ValueError("Versionsnummern dürfen nicht negativ sein.")
-                return version
-            except ValueError as e:
-                print(f"Fehler: {e}. Bitte erneut versuchen oder Enter für Standard drücken.")
+                return version_parts
+            except (ValueError, pkg_version.InvalidVersion) as e:
+                print(f"Fehler: Ungültiges Versionsformat ({e}). Benötigt Major.Minor.Patch. Bitte erneut versuchen oder Enter für Standard drücken.")
         except EOFError:
             print("\nEOF-Fehler bei Eingabe erkannt. Beende.")
             sys.exit(1)
@@ -363,18 +356,14 @@ def get_filename_pattern_simple(example_filename):
         print(f"Warnung: Ungültiger Beispiel-Dateiname '{example_filename}'. Verwende generisches Muster.", file=sys.stderr)
         return "update_kindle_*.bin"
 
-    # Regex, um gängige Versionsmuster zu finden (am Ende oder vor Suffixen wie _10th)
-    # Sucht nach Mustern wie 1.2.3 oder 1.2.3.4
-    # Berücksichtigt mögliche Präfixe und Suffixe im Namensteil
-    # Korrigierte Regex: Erlaubt optionalen Suffix nach der Version
-    match = re.search(r'^(.*?)(\d+\.\d+\.\d+(\.\d+)?)((?:_[a-zA-Z0-9]+)*?)(\.\w+)$', example_filename)
-
+    # Verbesserte Regex, um die Version (mindestens M.m.p) zu finden,
+    # auch wenn danach noch Suffixe kommen
+    match = re.search(r'^(.*?)(\d+\.\d+\.\d+(?:\.\d+)*)((?:_[a-zA-Z0-9]+)*?)(\.\w+)$', example_filename)
 
     if match:
         prefix = match.group(1)
-        # version_part = match.group(2) # Die gefundene Version (nicht direkt für Muster gebraucht)
-        suffix_after_version = match.group(4) # Zusätze wie _11th
-        extension = match.group(5) # Dateiendung .bin
+        suffix_after_version = match.group(3) # Zusätze wie _11th
+        extension = match.group(4) # Dateiendung .bin
         pattern = f"{prefix}*{suffix_after_version}{extension}"
         print(f"Abgeleitetes Muster (Regex): {pattern}")
         return pattern
@@ -422,7 +411,6 @@ def start_search(kindle_models, settings):
                 print(f"Fehler: Keine Basis-URL für Modell {kindle_input} definiert.", file=sys.stderr)
                 continue
 
-            # Stelle sicher, dass die Basis-URL mit einem / endet
             if not base_url.endswith('/'):
                 base_url += '/'
 
@@ -430,20 +418,20 @@ def start_search(kindle_models, settings):
                 print(f"\n--- Suche nach statischer Firmware für {kindle_input} ---")
                 print(f"Prüfe: {static_version_filename}")
                 full_url = f"{base_url}{static_version_filename}"
-                # check_url gibt Dateiname (str), Statuscode (int) oder Exception zurück
                 result = check_url(full_url, settings['possible_delays'], settings['delay_probability'], settings['timeout'])
 
                 if isinstance(result, str):
                     print(f"Gefunden: {full_url}")
                 elif isinstance(result, int):
                      print(f"Nicht gefunden: {full_url} (Status: {result})")
-                elif isinstance(result, Exception):
-                     print(f"Fehler beim Zugriff auf {full_url}: {type(result).__name__} - {result}", file=sys.stderr)
+                elif result is None: # Fehler
+                     # Fehlermeldung wurde bereits in check_url ausgegeben
+                     pass
                 else:
                      print(f"Unerwarteter Rückgabetyp von check_url für {full_url}: {type(result)}", file=sys.stderr)
 
                 print("-" * 30)
-                continue # Zurück zur Modellauswahl
+                continue
 
             elif example_filename and default_version_range:
                 filename_pattern = get_filename_pattern_simple(example_filename)
@@ -469,7 +457,7 @@ def start_search(kindle_models, settings):
                 version_range_to_search = (start_version, end_version)
 
                 start_time = time.time()
-                found_firmwares = [] # Initialisieren
+                found_firmwares = []
                 try:
                     if settings['use_threads']:
                         found_firmwares = check_firmware_version_threaded(
@@ -485,19 +473,17 @@ def start_search(kindle_models, settings):
                         )
                 except KeyboardInterrupt:
                      print("\nSuche durch Benutzer abgebrochen.")
-                     # found_firmwares bleibt leer oder enthält bis dahin gefundene
                 except Exception as e:
                      print(f"\nUnerwarteter Fehler während der Suche: {e}", file=sys.stderr)
-                     # found_firmwares bleibt leer oder enthält bis dahin gefundene
 
                 end_time = time.time()
 
                 print("-" * 30)
                 if found_firmwares:
-                    print(f"\nFolgende {len(found_firmwares)} Firmware-Dateien wurden gefunden:")
-                    # Sortieren der gefundenen Dateien (einfach alphabetisch)
-                    found_firmwares.sort()
-                    for file in found_firmwares:
+                    # Sortiere die Ergebnisse numerisch
+                    sorted_firmwares = sort_firmwares_by_version(found_firmwares)
+                    print(f"\nFolgende {len(sorted_firmwares)} Firmware-Dateien wurden gefunden (sortiert):")
+                    for file in sorted_firmwares:
                         print(f"- {file}")
                 else:
                     print("\nKeine passenden Firmware-Dateien im angegebenen Versionsbereich gefunden.")
@@ -524,11 +510,9 @@ def configure_settings(current_settings):
     """
     while True:
         print("\n--- Einstellungen ---")
-        # Zeige aktuelle Einstellungen an
         print(f"1. Mögliche Verzögerungszeiten (aktuell: {current_settings['possible_delays']})")
         print(f"2. Wahrscheinlichkeit für Verzögerung (aktuell: {current_settings['delay_probability'] * 100:.1f}%)")
         print(f"3. Multithreading verwenden (aktuell: {'Ja' if current_settings['use_threads'] else 'Nein'})")
-        # Zeige Max Threads nur an, wenn Threads aktiviert sind
         if current_settings['use_threads']:
             print(f"4. Maximale Threads (aktuell: {current_settings['max_threads']})")
         else:
@@ -544,7 +528,6 @@ def configure_settings(current_settings):
             if choice == "1":
                 delays_input = input("Gib die Verzögerungszeiten durch Komma getrennt ein (z.B. 0.5,1.0,2.0): ")
                 try:
-                    # Erlaube leere Eingabe für leere Liste
                     if not delays_input.strip():
                          new_delays = []
                     else:
@@ -577,7 +560,6 @@ def configure_settings(current_settings):
                 else:
                     print("Ungültige Eingabe. Einstellungen nicht geändert.")
             elif choice == "4":
-                # Nur relevant, wenn Threads verwendet werden
                 if not current_settings['use_threads']:
                     print("Einstellung nur relevant, wenn Multithreading aktiviert ist.")
                     continue
@@ -634,42 +616,44 @@ def main():
         "K5": {
             "description": "Kindle 5 (Touch)",
             "base_url": "https://s3.amazonaws.com/G7G_FirmwareUpdates_WebDownloads/",
-            "example_filename": "update_kindle_5.6.1.1.bin", # Letzte bekannte Version
+            "example_filename": "update_kindle_5.6.1.1.bin",
             "default_version_range": ((5, 3, 0), (5, 6, 25))
         },
         "K4": {
             "description": "Kindle 4 (Non-Touch, Silver/Graphite)",
-            "base_url": "https://s3.amazonaws.com/firmwareupdates/", # Korrigiert
-            "static_version": "update_kindle_4.1.4.bin" # Letzte bekannte Version
+            "base_url": "https://s3.amazonaws.com/firmwareupdates/",
+            "static_version": "update_kindle_4.1.4.bin"
         },
         "K4B": {
             "description": "Kindle 4 (Non-Touch, Black)",
-             "base_url": "https://s3.amazonaws.com/firmwareupdates/", # Korrigiert
-             "static_version": "update_kindle_4.1.4.bin" # Letzte bekannte Version
+             "base_url": "https://s3.amazonaws.com/firmwareupdates/",
+             "static_version": "update_kindle_4.1.4.bin"
         },
         "PW": {
             "description": "Kindle Paperwhite 1 (2012)",
             "base_url": "https://s3.amazonaws.com/G7G_FirmwareUpdates_WebDownloads/",
-            "example_filename": "update_kindle_5.6.1.1.bin", # Letzte bekannte Version
+            "example_filename": "update_kindle_5.6.1.1.bin",
             "default_version_range": ((5, 0, 0), (5, 6, 25))
         },
         "PW2": {
             "description": "Kindle Paperwhite 2 (2013)",
             "base_url": "https://s3.amazonaws.com/firmwaredownloads/",
-            "example_filename": "update_kindle_paperwhite_v2_5.12.2.2.bin", # Letzte bekannte Version
+            "example_filename": "update_kindle_paperwhite_v2_5.12.2.2.bin",
             "default_version_range": ((5, 4, 0), (5, 12, 25))
         },
         "KT2": {
             "description": "Kindle 7 (Basic, 2014)",
             "base_url": "https://s3.amazonaws.com/firmwaredownloads/",
-            "example_filename": "update_kindle_5.12.2.2.bin", # Letzte bekannte Version
+            "example_filename": "update_kindle_5.12.2.2.bin",
             "default_version_range": ((5, 6, 0), (5, 12, 25))
         },
         "KV": {
             "description": "Kindle Voyage (2014)",
             "base_url": "https://s3.amazonaws.com/firmwaredownloads/",
-            "example_filename": "update_kindle_voyage_5.13.7.0.1.bin", # Letzte bekannte Version (mit 4 Teilen)
-            "default_version_range": ((5, 6, 0), (5, 13, 25))
+            # Geändert zu statischer Version aufgrund der 4-teiligen Versionsnummer
+            "static_version": "update_kindle_voyage_5.13.7.0.1.bin"
+            # "example_filename": "update_kindle_voyage_5.13.7.0.1.bin",
+            # "default_version_range": ((5, 6, 0), (5, 13, 25)) # War nur 3-teilig
         },
         "PW3": {
             "description": "Kindle Paperwhite 3 (2015)",
@@ -691,67 +675,63 @@ def main():
         },
         "KOA2": {
             "description": "Kindle Oasis 2 (2017)",
-            "base_url": "https://s3.amazonaws.com/firmwaredownloads/", # Korrigiert
+            "base_url": "https://s3.amazonaws.com/firmwaredownloads/",
             "example_filename": "update_kindle_all_new_oasis_5.16.2.1.1.bin",
             "default_version_range": ((5, 9, 0), (5, 16, 25))
         },
         "PW4": {
             "description": "Kindle Paperwhite 4 (2018)",
-            "base_url": "https://s3.amazonaws.com/firmwaredownloads/", # Korrigiert
+            "base_url": "https://s3.amazonaws.com/firmwaredownloads/",
             "example_filename": "update_kindle_paperwhite_10th_5.16.2.1.1.bin",
             "default_version_range": ((5, 10, 0), (5, 16, 25))
         },
         "KT4": {
              "description": "Kindle 10 (Basic, 2019)",
-            "base_url": "https://s3.amazonaws.com/firmwaredownloads/", # Korrigiert
+            "base_url": "https://s3.amazonaws.com/firmwaredownloads/",
             "example_filename": "update_kindle_10th_5.16.2.1.1.bin",
             "default_version_range": ((5, 11, 0), (5, 16, 25))
         },
         "KOA3": {
             "description": "Kindle Oasis 3 (2019)",
-            "base_url": "https://s3.amazonaws.com/firmwaredownloads/", # Korrigiert
+            "base_url": "https://s3.amazonaws.com/firmwaredownloads/",
             "example_filename": "update_kindle_oasis_10th_5.16.2.1.1.bin",
             "default_version_range": ((5, 12, 0), (5, 16, 25))
         },
-         # --- Modelle der 11. Generation ---
         "PW5": {
             "description": "Kindle Paperwhite 5 (11th Gen, 2021)",
-            "base_url": "https://s3.amazonaws.com/firmwaredownloads/", # Korrigiert
-            "example_filename": "update_kindle_all_new_paperwhite_11th_5.16.8.bin", # Korrigiert (_gen entfernt)
+            "base_url": "https://s3.amazonaws.com/firmwaredownloads/",
+            "example_filename": "update_kindle_all_new_paperwhite_11th_5.16.8.bin",
             "default_version_range": ((5, 14, 0), (5, 17, 25))
         },
         "PW5SE": {
             "description": "Kindle Paperwhite 5 Signature Edition (11th Gen, 2021)",
-            "base_url": "https://s3.amazonaws.com/firmwaredownloads/", # Korrigiert
-            "example_filename": "update_kindle_all_new_paperwhite_11th_5.16.8.bin", # Korrigiert (_gen entfernt), gleiche FW wie PW5
+            "base_url": "https://s3.amazonaws.com/firmwaredownloads/",
+            "example_filename": "update_kindle_all_new_paperwhite_11th_5.16.8.bin",
             "default_version_range": ((5, 14, 0), (5, 17, 25))
         },
         "K11": {
             "description": "Kindle 11 (Basic, 2022)",
-            "base_url": "https://s3.amazonaws.com/firmwaredownloads/", # Korrigiert
-            "example_filename": "update_kindle_11th_5.16.8.bin", # Korrigiert (_gen entfernt)
+            "base_url": "https://s3.amazonaws.com/firmwaredownloads/",
+            "example_filename": "update_kindle_11th_5.16.8.bin",
             "default_version_range": ((5, 15, 0), (5, 17, 25))
         },
         "Scribe": {
             "description": "Kindle Scribe (2022)",
-            "base_url": "https://s3.amazonaws.com/firmwaredownloads/", # Korrigiert
+            "base_url": "https://s3.amazonaws.com/firmwaredownloads/",
             "example_filename": "update_kindle_scribe_5.16.8.bin",
             "default_version_range": ((5, 16, 0), (5, 17, 25))
         },
     }
 
-    # Standardeinstellungen
     settings = {
         'possible_delays': DEFAULT_DELAYS,
         'use_threads': True,
         'delay_probability': DEFAULT_DELAY_PROBABILITY,
         'timeout': DEFAULT_TIMEOUT,
         'verbose': DEFAULT_VERBOSE,
-        # Standardwert für max_threads wird jetzt aus der Konstante geholt
         'max_threads': DEFAULT_MAX_THREADS
     }
 
-    # Hauptmenü-Schleife
     while True:
         print("\n--- Kindle Firmware Checker Hauptmenü ---")
         print("1. Firmware-Suche starten")
@@ -785,8 +765,10 @@ if __name__ == "__main__":
     try:
         import requests
         from concurrent.futures import ThreadPoolExecutor, as_completed
+        # Importiere packaging nur, wenn es auch verwendet wird (für die Sortierung)
+        from packaging import version as pkg_version
     except ImportError as e:
-        print(f"Fehler: Benötigte Bibliothek nicht gefunden: {e}. Bitte installiere sie (z.B. 'pip install requests')", file=sys.stderr)
+        print(f"Fehler: Benötigte Bibliothek nicht gefunden: {e}. Bitte installiere sie (z.B. 'pip install requests packaging')", file=sys.stderr)
         sys.exit(1)
 
     main()
