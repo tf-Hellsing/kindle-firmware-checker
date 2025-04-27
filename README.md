@@ -37,8 +37,13 @@ If you just want to use the tool without installing Python or dealing with code,
 2. Find the latest release.  
 3. Under "Assets", download the .exe file (e.g., KindleFirmwareChecker\_vX.Y.Z\_Windows.exe).  
 4. Save the .exe file somewhere on your computer.  
-5. Double-click the .exe file to run the checker. No installation is needed.  
-   (Note: Your browser or Windows might show a warning because the file is downloaded from the internet. This is normal for executables created with tools like PyInstaller.)
+5. Double-click the .exe file to run the checker. No installation is needed.
+
+**Important Note on Antivirus Software:**
+
+* You might receive a warning from your browser, Windows Defender, or other antivirus software when downloading or running the .exe file. **This is likely a false positive.**  
+* **Why does this happen?** The executable is created using PyInstaller, which bundles the Python script and its libraries into a single file. Antivirus programs can sometimes be suspicious of these types of bundled files, especially if they are not digitally signed (which requires a paid certificate). The script also makes network connections (requests) to check Amazon's servers, which can sometimes trigger heuristic detection.  
+* **Is it safe?** The source code for this script is publicly available in this repository for anyone to review. We believe the executable is safe, but if you have concerns, you can always run the script from the source code (see option 2 below) or review the VirusTotal analysis linked in the release notes (if available).
 
 ### **2\. For Developers (Running from Source)**
 
