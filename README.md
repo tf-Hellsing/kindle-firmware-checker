@@ -47,7 +47,9 @@ If you just want to use the tool without installing Python or dealing with code,
 * **Is it safe?** The source code for this script is publicly available in this repository for anyone to review. We believe the executable is safe, but if you have concerns, you can always run the script from the source code (see option 2 below).  
 * **Transparency:** You can check the VirusTotal scan results for specific files:  
   * kindle\_checker\_v1.2.1-beta.exe  
+    https://www.virustotal.com/gui/file/ea1d297963cc26d27ee49161a49848b491881b3d9bf597efecb98def6fa125eb  
   * kindle\_checker\_v1.2.1-beta.py  
+    https://www.virustotal.com/gui/file/0b2757ef2dccc3f0abe03e395f179d083358921b210637e476766081e7c2ee72  
     (Note: These links are for a specific version. Links for the latest release might be found in the respective release notes.)
 
 ### **2\. For Developers (Running from Source)**
