@@ -31,19 +31,26 @@ There are two main ways to use this tool:
 
 ### **1\. For End-Users (Recommended \- Easiest)**
 
-If you just want to use the tool without installing Python or dealing with code, download the pre-compiled executable (.exe for Windows) from the [**Releases Page**](https://github.com/tf-Hellsing/kindle-firmware-checker/releases).
+If you just want to use the tool without installing Python or dealing with code, download the pre-packaged application archive (.zip for Windows) from the [**Releases Page**](https://github.com/tf-Hellsing/kindle-firmware-checker/releases).
 
 1. Go to the [Releases Page](https://github.com/tf-Hellsing/kindle-firmware-checker/releases).  
 2. Find the latest release.  
-3. Under "Assets", download the .exe file (e.g., KindleFirmwareChecker\_vX.Y.Z\_Windows.exe).  
-4. Save the .exe file somewhere on your computer.  
-5. Double-click the .exe file to run the checker. No installation is needed.
+3. Under "Assets", download the .zip file (e.g., KindleFirmwareChecker\_vX.Y.Z\_Windows.zip).  
+4. Save the .zip file somewhere on your computer.  
+5. **Extract the ZIP archive:** Right-click the downloaded .zip file and choose "Extract All..." (or use a tool like 7-Zip or WinRAR). This will create a new folder containing the application files.  
+6. **Run the executable:** Open the newly extracted folder. Inside, find and double-click the main executable file (it will likely be named kindle\_checker\_vX.Y.Z.exe or similar). No installation is needed.
 
 **Important Note on Antivirus Software:**
 
-* You might receive a warning from your browser, Windows Defender, or other antivirus software when downloading or running the .exe file. **This is likely a false positive.**  
-* **Why does this happen?** The executable is created using PyInstaller, which bundles the Python script and its libraries into a single file. Antivirus programs can sometimes be suspicious of these types of bundled files, especially if they are not digitally signed (which requires a paid certificate). The script also makes network connections (requests) to check Amazon's servers, which can sometimes trigger heuristic detection.  
-* **Is it safe?** The source code for this script is publicly available in this repository for anyone to review. We believe the executable is safe, but if you have concerns, you can always run the script from the source code (see option 2 below) or review the VirusTotal analysis linked in the release notes (if available).
+* You might receive a warning from your browser, Windows Defender, or other antivirus software when downloading the .zip file or running the .exe file inside it. **This is likely a false positive.**  
+* **Why does this happen?** The executable is created using PyInstaller, which bundles the Python script and its libraries. Antivirus programs can sometimes be suspicious of these types of bundled files, especially if they are not digitally signed (which requires a paid certificate). The script also makes network connections (requests) to check Amazon's servers, which can sometimes trigger heuristic detection.  
+* **Is it safe?** The source code for this script is publicly available in this repository for anyone to review. We believe the executable is safe, but if you have concerns, you can always run the script from the source code (see option 2 below).  
+* **Transparency:** You can check the VirusTotal scan results for specific files:  
+  * kindle\_checker\_v1.2.1-beta.exe  
+    https://www.virustotal.com/gui/file/ea1d297963cc26d27ee49161a49848b491881b3d9bf597efecb98def6fa125eb  
+  * kindle\_checker\_v1.2.1-beta.py  
+    https://www.virustotal.com/gui/file/0b2757ef2dccc3f0abe03e395f179d083358921b210637e476766081e7c2ee72  
+    (Note: These links are for a specific version. Links for the latest release might be found in the respective release notes.)
 
 ### **2\. For Developers (Running from Source)**
 
