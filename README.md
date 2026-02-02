@@ -1,4 +1,4 @@
-"# ⛔️ DEPRECATED\nDieses Projekt wird nicht mehr weiterentwickelt.
+⛔️ DEPRECATED - Dieses Projekt wird nicht mehr weiterentwickelt.
 
 # **Kindle Firmware Checker**
 
